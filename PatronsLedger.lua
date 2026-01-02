@@ -38,6 +38,11 @@ local OUTCOME_UNKNOWN = 0
 local OUTCOME_VICTORY = 1
 local OUTCOME_DEFEAT = 2
 
+-- Polling configuration for score updates (ranked matches only)
+local SCORE_POLL_MAX_ATTEMPTS = 20
+local SCORE_POLL_DELAY_MS = 500  -- 500ms between polls
+local SCORE_POLL_TIMEOUT_MS = 10000  -- 10 seconds total timeout
+
 --[[ ==================== ]]
 --[[   STATE VARIABLES     ]]
 --[[ ==================== ]]
@@ -49,7 +54,12 @@ local rankStart, scoreStart, rankEnd, scoreEnd = 0, 0, 0, 0
 local rankSignPlus = "00ff00"
 local rankSignMinus = "ff1c1c"
 
--- Match tracking
+-- Score polling state (for ranked matches only)
+local scorePollAttempts = 0
+local scorePollStartTime = 0
+local isPollingForScore = false
+
+-- Match tracking (ranked matches only)
 local matchData = {}
 
 -- Settings (configurable via slash commands)
@@ -59,7 +69,7 @@ local settings = {
 	showChatNotifications = true,
 	colorizeLeaderboard = true,
 
-	-- Statistics tracking
+	-- Statistics tracking (ranked only)
 	trackStatistics = true,
 	showMatchSummary = true,
 }
@@ -67,25 +77,6 @@ local settings = {
 -- SavedVariables
 local savedVars = nil
 
---[[ ==================== ]]
---[[   MATCH TYPE NAMES    ]]
---[[ ==================== ]]
-
-local matchTypeName = {
-	[TRIBUTE_MATCH_TYPE_CASUAL] = "Casual",
-	[TRIBUTE_MATCH_TYPE_CLIENT] = "NPC",
-	[TRIBUTE_MATCH_TYPE_COMPETITIVE] = "Ranked",
-	[TRIBUTE_MATCH_TYPE_PRIVATE] = "Friendly",
-}
-
--- Victory type names (for potential future use)
--- local victoryTypeName = {
--- 	[TRIBUTE_VICTORY_TYPE_PRESTIGE] = "Prestige",
--- 	[TRIBUTE_VICTORY_TYPE_PATRON] = "Patron",
--- 	[TRIBUTE_VICTORY_TYPE_CONCESSION] = "Concession",
--- 	[TRIBUTE_VICTORY_TYPE_EARLY_CONCESSION] = "Early Concession",
--- 	[TRIBUTE_VICTORY_TYPE_SYSTEM_DISBAND] = "System Disband",
--- }
 
 --[[ ==================== ]]
 --[[   UTILITY FUNCTIONS   ]]
@@ -121,6 +112,7 @@ end
 
 --[[ ==================== ]]
 --[[   MATCH DATA MANAGER  ]]
+--[[   (Ranked Matches)    ]]
 --[[ ==================== ]]
 
 local function InitializeMatchData()
@@ -152,10 +144,9 @@ local function ClearMatchData()
 	matchData = {}
 end
 
--- Removed unused function IsPlayerTurn()
-
 --[[ ==================== ]]
 --[[   STATISTICS MANAGER  ]]
+--[[   (Ranked Matches)    ]]
 --[[ ==================== ]]
 
 local function CreateCharStatistics(charId)
@@ -170,14 +161,12 @@ local function CreateCharStatistics(charId)
 		return tableStructure
 	end
 
+	-- Only create statistics for ranked matches
 	savedVars.statistics.character[charId] = {
 		name = GetUnitName("player"),
 		server = GetWorldName(),
 		games = {
-			[TRIBUTE_MATCH_TYPE_CASUAL] = {time = 0, played = 0, won = 0},
-			[TRIBUTE_MATCH_TYPE_CLIENT] = {time = 0, played = 0, won = 0},
 			[TRIBUTE_MATCH_TYPE_COMPETITIVE] = {time = 0, played = 0, won = 0},
-			[TRIBUTE_MATCH_TYPE_PRIVATE] = {time = 0, played = 0, won = 0},
 		},
 		victory = VictoryDefeatStatsTableStructure(),
 		defeat = VictoryDefeatStatsTableStructure(),
@@ -199,14 +188,14 @@ local function PostMatchProcess()
 		CreateCharStatistics(charId)
 	end
 
-	-- Record match data (with safety checks)
+	-- Record match data (only for ranked)
 	local store = savedVars.statistics.character[charId]
-	local matchTypeData = store.games[matchData.matchType]
+	local matchTypeData = store.games[TRIBUTE_MATCH_TYPE_COMPETITIVE]
 
 	if not matchTypeData then
 		-- Fallback: create entry if somehow missing
 		matchTypeData = {time = 0, played = 0, won = 0}
-		store.games[matchData.matchType] = matchTypeData
+		store.games[TRIBUTE_MATCH_TYPE_COMPETITIVE] = matchTypeData
 	end
 
 	matchTypeData.played = matchTypeData.played + 1
@@ -217,15 +206,15 @@ local function PostMatchProcess()
 
 	-- Record victory/defeat type (with validation)
 	if victory then
-		if not store.victory[matchData.matchType] then
-			store.victory[matchData.matchType] = {}
+		if not store.victory[TRIBUTE_MATCH_TYPE_COMPETITIVE] then
+			store.victory[TRIBUTE_MATCH_TYPE_COMPETITIVE] = {}
 		end
-		store.victory[matchData.matchType][victoryType] = (store.victory[matchData.matchType][victoryType] or 0) + 1
+		store.victory[TRIBUTE_MATCH_TYPE_COMPETITIVE][victoryType] = (store.victory[TRIBUTE_MATCH_TYPE_COMPETITIVE][victoryType] or 0) + 1
 	else
-		if not store.defeat[matchData.matchType] then
-			store.defeat[matchData.matchType] = {}
+		if not store.defeat[TRIBUTE_MATCH_TYPE_COMPETITIVE] then
+			store.defeat[TRIBUTE_MATCH_TYPE_COMPETITIVE] = {}
 		end
-		store.defeat[matchData.matchType][victoryType] = (store.defeat[matchData.matchType][victoryType] or 0) + 1
+		store.defeat[TRIBUTE_MATCH_TYPE_COMPETITIVE][victoryType] = (store.defeat[TRIBUTE_MATCH_TYPE_COMPETITIVE][victoryType] or 0) + 1
 	end
 end
 
@@ -244,9 +233,8 @@ local function PrintMatchSummary()
 	local totalTime = matchData.matchDuration or 0
 
 	local outcome = matchData.outcome == OUTCOME_VICTORY and "|c00ff00Victory|r" or "|cff1c1cDefeat|r"
-	local matchType = matchTypeName[matchData.matchType] or "Unknown"
 
-	PrintMessage(string.format("|cFFFF00[ToT Match Summary]|r %s - %s", outcome, matchType))
+	PrintMessage(string.format("|cFFFF00[ToT Ranked Summary]|r %s", outcome))
 	PrintMessage(string.format("  Duration: %s | Your Turns: %d | Opponent Turns: %d",
 		FormatTime(totalTime), playerTurns, opponentTurns))
 
@@ -257,6 +245,7 @@ end
 
 --[[ ==================== ]]
 --[[   RANK TRACKING       ]]
+--[[   (Ranked Matches)    ]]
 --[[ ==================== ]]
 
 local function PrintScore()
@@ -341,6 +330,61 @@ local function UpdateScore(type, skipRequest)
 	end
 end
 
+-- Check if score has updated and handle accordingly (ranked matches only)
+local function CheckScoreUpdate()
+	if not isPollingForScore then return end
+
+	local currentTime = GetGameTimeMilliseconds()
+	local elapsedTime = currentTime - scorePollStartTime
+
+	-- Check if we've exceeded timeout
+	if elapsedTime >= SCORE_POLL_TIMEOUT_MS or scorePollAttempts >= SCORE_POLL_MAX_ATTEMPTS then
+		-- Timeout reached - display current data even if unchanged
+		if settings.showChatNotifications then
+			PrintMessage(string.format("|cFFFF00[ToT Ranked]|r Score update timed out after %d attempts (%.1fs). Displaying current data...",
+				scorePollAttempts, elapsedTime / 1000))
+		end
+		PrintScore()
+		isPollingForScore = false
+		scorePollAttempts = 0
+		return
+	end
+
+	-- Get current score from the data we just received
+	local _, currentScore = GetTributeLeaderboardLocalPlayerInfo(TRIBUTE_LEADERBOARD_TYPE_RANKED)
+
+	-- Check if score has changed from start
+	if currentScore and currentScore ~= scoreStart then
+		-- Score has changed! Update and display
+		scoreEnd = currentScore
+
+		-- Also update rank information
+		local rankReady = RequestTributeLeaderboardRank()
+		if rankReady == LEADERBOARD_DATA_READY then
+			local rank, size = GetTributeLeaderboardRankInfo()
+			if rank and size then
+				rankEnd, leaderboardSize = rank, size
+			end
+		end
+
+		-- Optional: Log successful poll time for debugging
+		-- Uncomment the line below if you want to see how long it took to get updated score
+		-- PrintMessage(string.format("|c888888[Debug] Score updated after %d polls (%.1fs)|r", scorePollAttempts, elapsedTime / 1000))
+
+		PrintScore()
+		isPollingForScore = false
+		scorePollAttempts = 0
+		return
+	end
+
+	-- Score hasn't changed yet, request new data after delay
+	scorePollAttempts = scorePollAttempts + 1
+	zo_callLater(function()
+		-- Request new data, which will trigger EVENT_TRIBUTE_LEADERBOARD_DATA_RECEIVED
+		QueryTributeLeaderboardData()
+	end, SCORE_POLL_DELAY_MS)
+end
+
 local function UpdateData(type)
 	rankState = type
 	scoreState = type
@@ -354,11 +398,23 @@ local function GameStart()
 end
 
 local function GameOver()
-	UpdateData(PENDING_END)
+	-- Initialize polling state
+	scorePollAttempts = 0
+	scorePollStartTime = GetGameTimeMilliseconds()
+	isPollingForScore = true
+
+	-- Start polling for score updates
+	-- We delay the first request to give the server time to process the match
+	zo_callLater(function()
+		-- This will trigger EVENT_TRIBUTE_LEADERBOARD_DATA_RECEIVED
+		QueryTributeLeaderboardData()
+	end, SCORE_POLL_DELAY_MS)
 end
+
 
 --[[ ==================== ]]
 --[[   TURN TRACKING       ]]
+--[[   (Ranked Matches)    ]]
 --[[ ==================== ]]
 
 local function OnPlayerTurnStart(_, isPlayer)
@@ -376,35 +432,26 @@ end
 --[[ ==================== ]]
 
 local function OnGameFlowStateChange(_, flowState)
+	-- Only track rank for competitive (ranked) matches
+	if GetTributeMatchType() ~= TRIBUTE_MATCH_TYPE_COMPETITIVE then return end
+
 	if flowState == TRIBUTE_GAME_FLOW_STATE_INTRO then
 		InitializeMatchData()
-
-		-- Only track rank for competitive (ranked) matches
-		if GetTributeMatchType() == TRIBUTE_MATCH_TYPE_COMPETITIVE then
-			GameStart()
-		end
-
+		GameStart()
 	elseif flowState == TRIBUTE_GAME_FLOW_STATE_GAME_OVER then
-		-- Only track rank for competitive (ranked) matches
-		if GetTributeMatchType() == TRIBUTE_MATCH_TYPE_COMPETITIVE then
-			-- GameOver will trigger async rank updates, so we need to wait for them
-			-- before processing match data
-			GameOver()
-		end
+		-- GameOver will start event-driven polling for score updates
+		GameOver()
 
-		-- Wait for rank data to be received (if ranked) before processing
-		-- The EVENT_TRIBUTE_LEADERBOARD_RANK_RECEIVED and
-		-- EVENT_TRIBUTE_LEADERBOARD_DATA_RECEIVED handlers will complete the updates
-		-- For non-ranked matches, this delay just ensures clean processing
+		-- Process match statistics and display summary
+		-- Wait a bit to ensure all data is processed
 		zo_callLater(function()
 			PostMatchProcess()
 			PrintMatchSummary()
-			-- Wait a bit more before clearing to ensure all processing is done
+			-- Clear match data after processing
 			zo_callLater(function()
 				ClearMatchData()
 			end, 100)
 		end, 500)
-
 	elseif flowState == TRIBUTE_GAME_FLOW_STATE_INACTIVE then
 		ClearMatchData()
 	end
@@ -505,21 +552,14 @@ local function SetupUIEnhancements()
 	if GAMEPAD_LEADERBOARD_LIST then
 		ZO_PostHook(GAMEPAD_LEADERBOARD_LIST, "SetupLeaderboardPlayerEntry", SetupLeaderboardPlayerEntry)
 	end
-
-	-- Russian language timer adjustment (keyboard only, may not exist on PS5)
-	if GetCVar("Language.2") == "ru" then
-		if ZO_TributeLeaderboardsInformationArea_KeyboardTimer and ZO_TributeLeaderboardsInformationArea_Keyboard then
-			ZO_TributeLeaderboardsInformationArea_KeyboardTimer:ClearAnchors()
-			ZO_TributeLeaderboardsInformationArea_KeyboardTimer:SetAnchor(TOPRIGHT, ZO_TributeLeaderboardsInformationArea_Keyboard, TOPRIGHT)
-		end
-	end
 end
+
 
 --[[ ==================== ]]
 --[[   STATISTICS COMMANDS ]]
 --[[ ==================== ]]
 
-local function PrintStatistics(matchType)
+local function PrintStatistics()
 	local charId = GetCurrentCharacterId()
 	if not savedVars.statistics.character[charId] then
 		PrintMessage("|cff1c1c[ToT Stats]|r No statistics recorded yet")
@@ -527,32 +567,19 @@ local function PrintStatistics(matchType)
 	end
 
 	local stats = savedVars.statistics.character[charId].games
+	local s = stats[TRIBUTE_MATCH_TYPE_COMPETITIVE]
 
-	if matchType then
-		local s = stats[matchType]
-		if not s then
-			PrintMessage(string.format("|cff1c1c[ToT Stats]|r No statistics for %s matches", matchTypeName[matchType] or "Unknown"))
-			return
-		end
-
-		local winRate = s.played > 0 and (s.won / s.played * 100) or 0
-		local avgTime = s.played > 0 and (s.time / s.played) or 0
-
-		PrintMessage(string.format("|c00ff00[ToT Stats]|r %s - Played: %d | Won: %d | Win Rate: %.1f%%",
-			matchTypeName[matchType], s.played, s.won, winRate))
-		PrintMessage(string.format("  Total Time: %s | Avg Time: %s",
-			FormatTime(s.time), FormatTime(avgTime)))
-	else
-		PrintMessage("|c00ff00[ToT Stats]|r Overall Statistics:")
-		for mt, name in pairs(matchTypeName) do
-			local s = stats[mt]
-			if s.played > 0 then
-				local winRate = (s.won / s.played * 100)
-				PrintMessage(string.format("  %s: %d played, %d won (%.1f%%)",
-					name, s.played, s.won, winRate))
-			end
-		end
+	if not s or s.played == 0 then
+		PrintMessage("|cff1c1c[ToT Stats]|r No ranked matches played yet")
+		return
 	end
+
+	local winRate = s.played > 0 and (s.won / s.played * 100) or 0
+	local avgTime = s.played > 0 and (s.time / s.played) or 0
+
+	PrintMessage("|c00ff00[ToT Ranked Stats]|r")
+	PrintMessage(string.format("  Played: %d | Won: %d | Win Rate: %.1f%%", s.played, s.won, winRate))
+	PrintMessage(string.format("  Total Time: %s | Avg Time: %s", FormatTime(s.time), FormatTime(avgTime)))
 end
 
 --[[ ==================== ]]
@@ -576,14 +603,13 @@ local function RegisterSlashCommands()
 			d("  |cFFFF00Basic:|r")
 			d("    /totlb on/off - Enable/disable addon")
 			d("    /totlb status - Show current settings")
-			d("    /totlb stats - Show overall statistics")
-			d("    /totlb stats <type> - Show stats for: casual, ranked, npc, friendly")
+			d("    /totlb stats - Show ranked match statistics")
 			d("  |cFFFF00Display:|r")
 			d("    /totlb chat on/off - Toggle chat notifications")
 			d("    /totlb color on/off - Toggle leaderboard colors")
 			d("    /totlb summary on/off - Toggle match summary")
 			d("  |cFFFF00Tracking:|r")
-			d("    /totlb track stats on/off - Track match statistics")
+			d("    /totlb track on/off - Track match statistics")
 
 		elseif args == "on" then
 			settings.enabled = true
@@ -625,12 +651,12 @@ local function RegisterSlashCommands()
 			SaveSettings()
 			d("|cff1c1c[Patron's Ledger]|r Match summary disabled")
 
-		elseif args == "track stats on" then
+		elseif args == "track on" then
 			settings.trackStatistics = true
 			SaveSettings()
 			d("|c00ff00[Patron's Ledger]|r Statistics tracking enabled")
 
-		elseif args == "track stats off" then
+		elseif args == "track off" then
 			settings.trackStatistics = false
 			SaveSettings()
 			d("|cff1c1c[Patron's Ledger]|r Statistics tracking disabled")
@@ -646,21 +672,12 @@ local function RegisterSlashCommands()
 		elseif args == "stats" then
 			PrintStatistics()
 
-		elseif args == "stats casual" then
-			PrintStatistics(TRIBUTE_MATCH_TYPE_CASUAL)
-		elseif args == "stats ranked" then
-			PrintStatistics(TRIBUTE_MATCH_TYPE_COMPETITIVE)
-		elseif args == "stats npc" then
-			PrintStatistics(TRIBUTE_MATCH_TYPE_CLIENT)
-		elseif args == "stats friendly" then
-			PrintStatistics(TRIBUTE_MATCH_TYPE_PRIVATE)
-
 		else
 			d("|cff1c1c[Patron's Ledger]|r Unknown command. Type |cffffff/totlb help|r for available commands")
 		end
 	end
 
-	d("|c00ff00[Patron's Ledger]|r Tales of Tribute companion loaded. Type |cffffff/totlb help|r for commands")
+	d("|c00ff00[Patron's Ledger]|r Ranked Tribute tracker loaded. Type |cffffff/totlb help|r for commands")
 end
 
 --[[ ==================== ]]
@@ -691,15 +708,19 @@ local function Initialize()
 	EM:RegisterForEvent(NAME, EVENT_TRIBUTE_GAME_FLOW_STATE_CHANGE, OnGameFlowStateChange)
 	EM:RegisterForEvent(NAME, EVENT_TRIBUTE_PLAYER_TURN_STARTED, OnPlayerTurnStart)
 
+	-- Handle both PENDING_START and event-driven polling for PENDING_END
 	EM:RegisterForEvent(NAME, EVENT_TRIBUTE_LEADERBOARD_RANK_RECEIVED, function()
-		if rankState == PENDING_START or rankState == PENDING_END then
+		if rankState == PENDING_START then
 			UpdateRank(rankState, true)
 		end
 	end)
 
 	EM:RegisterForEvent(NAME, EVENT_TRIBUTE_LEADERBOARD_DATA_RECEIVED, function()
-		if scoreState == PENDING_START or scoreState == PENDING_END then
+		if scoreState == PENDING_START then
 			UpdateScore(scoreState, true)
+		elseif isPollingForScore then
+			-- This is part of our event-driven polling mechanism
+			CheckScoreUpdate()
 		end
 	end)
 
