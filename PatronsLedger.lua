@@ -93,6 +93,15 @@ local victoryTypeName = {
 --[[   UTILITY FUNCTIONS   ]]
 --[[ ==================== ]]
 
+local function IsMatchDataInitialized()
+	return not ZO_IsTableEmpty(matchData)
+end
+
+local function ClearMatchData()
+	matchData = {}
+end
+
+
 -- Return current rank, total players and percent
 local function GetPlayerStats()
 	local playerLeaderboardRank, totalLeaderboardPlayers = GetTributeLeaderboardRankInfo()
@@ -165,14 +174,6 @@ local function CaptureMatchPatrons()
 	end
 
 	matchData.patrons = patrons
-end
-
-local function IsMatchDataInitialized()
-	return not ZO_IsTableEmpty(matchData)
-end
-
-local function ClearMatchData()
-	matchData = {}
 end
 
 --[[ ==================== ]]
@@ -272,18 +273,25 @@ local function PostMatchProcess()
 			store.patrons = {}
 		end
 
-		-- Create a sorted patron key for consistent tracking
-		local patronIds = {}
+		-- Create a sorted patron list for consistent tracking
+		local sortedPatrons = {}
 		for _, patron in ipairs(matchData.patrons) do
+			table.insert(sortedPatrons, patron)
+		end
+		-- Sort by ID
+		table.sort(sortedPatrons, function(a, b) return a.id < b.id end)
+
+		-- Create key from sorted IDs
+		local patronIds = {}
+		for _, patron in ipairs(sortedPatrons) do
 			table.insert(patronIds, patron.id)
 		end
-		table.sort(patronIds)
 		local patronKey = table.concat(patronIds, ",")
 
-		-- Store patron names for display (only first time)
+		-- Store patron names in sorted order (only first time)
 		if not store.patrons[patronKey] then
 			local patronNames = {}
-			for _, patron in ipairs(matchData.patrons) do
+			for _, patron in ipairs(sortedPatrons) do
 				table.insert(patronNames, patron.name)
 			end
 			store.patrons[patronKey] = {
