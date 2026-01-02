@@ -77,6 +77,17 @@ local settings = {
 -- SavedVariables
 local savedVars = nil
 
+--[[ ==================== ]]
+--[[   VICTORY TYPE NAMES  ]]
+--[[ ==================== ]]
+
+local victoryTypeName = {
+	[TRIBUTE_VICTORY_TYPE_PRESTIGE] = "Prestige",
+	[TRIBUTE_VICTORY_TYPE_PATRON] = "Patron",
+	[TRIBUTE_VICTORY_TYPE_CONCESSION] = "Concession",
+	[TRIBUTE_VICTORY_TYPE_EARLY_CONCESSION] = "Early Concession",
+	[TRIBUTE_VICTORY_TYPE_SYSTEM_DISBAND] = "System Disband",
+}
 
 --[[ ==================== ]]
 --[[   UTILITY FUNCTIONS   ]]
@@ -133,7 +144,27 @@ local function InitializeMatchData()
 		matchStart = GetGameTimeMilliseconds(),
 		matchDuration = 0,
 		turns = InitPlayerOpponentTable(),
+		patrons = {}, -- Will be populated after patron drafting
 	}
+end
+
+-- Capture patron IDs after drafting is complete
+local function CaptureMatchPatrons()
+	if not IsMatchDataInitialized() then return end
+
+	local patrons = {}
+	-- There are 4 patron draft slots (0-3)
+	for i = 0, 3 do
+		local patronId = GetDraftedPatronId(i)
+		if patronId and patronId > 0 then
+			table.insert(patrons, {
+				id = patronId,
+				name = GetTributePatronName(patronId)
+			})
+		end
+	end
+
+	matchData.patrons = patrons
 end
 
 local function IsMatchDataInitialized()
@@ -170,6 +201,10 @@ local function CreateCharStatistics(charId)
 		},
 		victory = VictoryDefeatStatsTableStructure(),
 		defeat = VictoryDefeatStatsTableStructure(),
+		-- New: Track opponent win/loss records
+		opponents = {},
+		-- New: Track patron combination win/loss records
+		patrons = {},
 	}
 end
 
@@ -216,6 +251,53 @@ local function PostMatchProcess()
 		end
 		store.defeat[TRIBUTE_MATCH_TYPE_COMPETITIVE][victoryType] = (store.defeat[TRIBUTE_MATCH_TYPE_COMPETITIVE][victoryType] or 0) + 1
 	end
+
+	-- Track opponent statistics
+	if matchData.opponentName and matchData.opponentName ~= "" then
+		if not store.opponents then
+			store.opponents = {}
+		end
+		if not store.opponents[matchData.opponentName] then
+			store.opponents[matchData.opponentName] = {played = 0, won = 0}
+		end
+		store.opponents[matchData.opponentName].played = store.opponents[matchData.opponentName].played + 1
+		if victory then
+			store.opponents[matchData.opponentName].won = store.opponents[matchData.opponentName].won + 1
+		end
+	end
+
+	-- Track patron combination statistics
+	if matchData.patrons and #matchData.patrons > 0 then
+		if not store.patrons then
+			store.patrons = {}
+		end
+
+		-- Create a sorted patron key for consistent tracking
+		local patronIds = {}
+		for _, patron in ipairs(matchData.patrons) do
+			table.insert(patronIds, patron.id)
+		end
+		table.sort(patronIds)
+		local patronKey = table.concat(patronIds, ",")
+
+		-- Store patron names for display (only first time)
+		if not store.patrons[patronKey] then
+			local patronNames = {}
+			for _, patron in ipairs(matchData.patrons) do
+				table.insert(patronNames, patron.name)
+			end
+			store.patrons[patronKey] = {
+				played = 0,
+				won = 0,
+				names = table.concat(patronNames, ", ")
+			}
+		end
+
+		store.patrons[patronKey].played = store.patrons[patronKey].played + 1
+		if victory then
+			store.patrons[patronKey].won = store.patrons[patronKey].won + 1
+		end
+	end
 end
 
 local function PrintMatchSummary()
@@ -240,6 +322,15 @@ local function PrintMatchSummary()
 
 	if matchData.opponentName and matchData.opponentName ~= "" then
 		PrintMessage(string.format("  Opponent: %s", matchData.opponentName))
+	end
+
+	-- Display patrons used in this match
+	if matchData.patrons and #matchData.patrons > 0 then
+		local patronNames = {}
+		for _, patron in ipairs(matchData.patrons) do
+			table.insert(patronNames, patron.name)
+		end
+		PrintMessage(string.format("  Patrons: %s", table.concat(patronNames, ", ")))
 	end
 end
 
@@ -438,6 +529,9 @@ local function OnGameFlowStateChange(_, flowState)
 	if flowState == TRIBUTE_GAME_FLOW_STATE_INTRO then
 		InitializeMatchData()
 		GameStart()
+	elseif flowState == TRIBUTE_GAME_FLOW_STATE_PLAYING then
+		-- Capture patrons after drafting is complete and game has started
+		CaptureMatchPatrons()
 	elseif flowState == TRIBUTE_GAME_FLOW_STATE_GAME_OVER then
 		-- GameOver will start event-driven polling for score updates
 		GameOver()
@@ -582,6 +676,128 @@ local function PrintStatistics()
 	PrintMessage(string.format("  Total Time: %s | Avg Time: %s", FormatTime(s.time), FormatTime(avgTime)))
 end
 
+local function PrintDetailedStatistics()
+	local charId = GetCurrentCharacterId()
+	if not savedVars.statistics.character[charId] then
+		PrintMessage("|cff1c1c[ToT Stats]|r No statistics recorded yet")
+		return
+	end
+
+	local store = savedVars.statistics.character[charId]
+	local stats = store.games[TRIBUTE_MATCH_TYPE_COMPETITIVE]
+
+	if not stats or stats.played == 0 then
+		PrintMessage("|cff1c1c[ToT Stats]|r No ranked matches played yet")
+		return
+	end
+
+	-- Basic stats
+	local winRate = stats.played > 0 and (stats.won / stats.played * 100) or 0
+	local lossCount = stats.played - stats.won
+
+	PrintMessage("|c00ff00[ToT Ranked Stats - Detailed]|r")
+	PrintMessage(string.format("  Total: %d played | %d won | %d lost | %.1f%% win rate",
+		stats.played, stats.won, lossCount, winRate))
+
+	-- Victory breakdown
+	if store.victory and store.victory[TRIBUTE_MATCH_TYPE_COMPETITIVE] then
+		PrintMessage("|c00ff00  Victories by type:|r")
+		local victoryData = store.victory[TRIBUTE_MATCH_TYPE_COMPETITIVE]
+		local totalVictories = 0
+
+		for victoryType, count in pairs(victoryData) do
+			if count > 0 then
+				local typeName = victoryTypeName[victoryType] or "Unknown"
+				PrintMessage(string.format("    %s: %d", typeName, count))
+				totalVictories = totalVictories + count
+			end
+		end
+
+		if totalVictories == 0 then
+			PrintMessage("    No victories recorded")
+		end
+	end
+
+	-- Defeat breakdown
+	if store.defeat and store.defeat[TRIBUTE_MATCH_TYPE_COMPETITIVE] then
+		PrintMessage("|cff1c1c  Defeats by type:|r")
+		local defeatData = store.defeat[TRIBUTE_MATCH_TYPE_COMPETITIVE]
+		local totalDefeats = 0
+
+		for defeatType, count in pairs(defeatData) do
+			if count > 0 then
+				local typeName = victoryTypeName[defeatType] or "Unknown"
+				PrintMessage(string.format("    %s: %d", typeName, count))
+				totalDefeats = totalDefeats + count
+			end
+		end
+
+		if totalDefeats == 0 then
+			PrintMessage("    No defeats recorded")
+		end
+	end
+end
+
+local function PrintOpponentStatistics()
+	local charId = GetCurrentCharacterId()
+	if not savedVars.statistics.character[charId] then
+		PrintMessage("|cff1c1c[ToT Stats]|r No statistics recorded yet")
+		return
+	end
+
+	local store = savedVars.statistics.character[charId]
+	if not store.opponents or not next(store.opponents) then
+		PrintMessage("|cff1c1c[ToT Opponents]|r No opponent data recorded yet")
+		return
+	end
+
+	PrintMessage("|c00ff00[ToT Ranked - Opponent Stats]|r")
+
+	-- Sort opponents by games played
+	local opponents = {}
+	for name, data in pairs(store.opponents) do
+		table.insert(opponents, {name = name, data = data})
+	end
+	table.sort(opponents, function(a, b) return a.data.played > b.data.played end)
+
+	for _, opponent in ipairs(opponents) do
+		local winRate = opponent.data.played > 0 and (opponent.data.won / opponent.data.played * 100) or 0
+		local lost = opponent.data.played - opponent.data.won
+		PrintMessage(string.format("  %s: %d-%d (%.1f%%)",
+			opponent.name, opponent.data.won, lost, winRate))
+	end
+end
+
+local function PrintPatronStatistics()
+	local charId = GetCurrentCharacterId()
+	if not savedVars.statistics.character[charId] then
+		PrintMessage("|cff1c1c[ToT Stats]|r No statistics recorded yet")
+		return
+	end
+
+	local store = savedVars.statistics.character[charId]
+	if not store.patrons or not next(store.patrons) then
+		PrintMessage("|cff1c1c[ToT Patrons]|r No patron data recorded yet")
+		return
+	end
+
+	PrintMessage("|c00ff00[ToT Ranked - Patron Combo Stats]|r")
+
+	-- Sort patron combos by games played
+	local patronCombos = {}
+	for key, data in pairs(store.patrons) do
+		table.insert(patronCombos, data)
+	end
+	table.sort(patronCombos, function(a, b) return a.played > b.played end)
+
+	for _, combo in ipairs(patronCombos) do
+		local winRate = combo.played > 0 and (combo.won / combo.played * 100) or 0
+		local lost = combo.played - combo.won
+		PrintMessage(string.format("  %s", combo.names))
+		PrintMessage(string.format("    %d-%d (%.1f%%)", combo.won, lost, winRate))
+	end
+end
+
 --[[ ==================== ]]
 --[[   SLASH COMMANDS      ]]
 --[[ ==================== ]]
@@ -603,7 +819,11 @@ local function RegisterSlashCommands()
 			d("  |cFFFF00Basic:|r")
 			d("    /totlb on/off - Enable/disable addon")
 			d("    /totlb status - Show current settings")
+			d("  |cFFFF00Statistics:|r")
 			d("    /totlb stats - Show ranked match statistics")
+			d("    /totlb stats detailed - Show detailed victory/defeat breakdown")
+			d("    /totlb stats opponents - Show win rate vs each opponent")
+			d("    /totlb stats patrons - Show win rate with patron combos")
 			d("  |cFFFF00Display:|r")
 			d("    /totlb chat on/off - Toggle chat notifications")
 			d("    /totlb color on/off - Toggle leaderboard colors")
@@ -671,6 +891,15 @@ local function RegisterSlashCommands()
 
 		elseif args == "stats" then
 			PrintStatistics()
+
+		elseif args == "stats detailed" then
+			PrintDetailedStatistics()
+
+		elseif args == "stats opponents" then
+			PrintOpponentStatistics()
+
+		elseif args == "stats patrons" then
+			PrintPatronStatistics()
 
 		else
 			d("|cff1c1c[Patron's Ledger]|r Unknown command. Type |cffffff/totlb help|r for available commands")
