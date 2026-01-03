@@ -17,7 +17,7 @@ Enhanced Features:
 - Extensive bug fixes and safety improvements
 
 Original Authors: @andy.s, @ExoY94
-PS5 Enhancement & Integration: @svammy
+PS5 Enhancement & Integration: @tzammy_
 
 This addon combines and enhances code from the above addons.
 If you are an original author and wish this to be removed, please contact me.

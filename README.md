@@ -2,7 +2,7 @@
 
 **A comprehensive Tales of Tribute companion addon for Elder Scrolls Online (PS5 optimized)**
 
-Version 1.0.0 | Author: @svammy
+Version 1.0.0 | Author: @tzammy_
 
 BASED ON:
 - TributeImprovedLeaderboard by @andy.s
@@ -36,6 +36,9 @@ Patron's Ledger enhances your Tales of Tribute experience with rank tracking, de
 
 ### Statistics
 - `/totlb stats` - Show overall statistics
+- `/totlb stats detailed` - Show detailed statistics
+- `/totlb stats opponents` - Show statistics about opponents (win/loss %)
+- `/totlb stats patrons` - Show win rate with patron combos
 
 ### Display Settings
 - `/totlb chat on/off` - Toggle chat notifications
@@ -43,7 +46,7 @@ Patron's Ledger enhances your Tales of Tribute experience with rank tracking, de
 - `/totlb summary on/off` - Toggle post-match summaries
 
 ### Tracking
-- `/totlb track stats on/off` - Toggle statistics tracking
+- `/totlb track on/off` - Toggle statistics tracking
 
 ---
 
