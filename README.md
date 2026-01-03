@@ -19,7 +19,7 @@ Patron's Ledger enhances your Tales of Tribute experience with rank tracking, de
 ### Key Features
 
 ✅ **Rank Tracking** - See your rank changes after every competitive match  
-✅ **Match Statistics** - Track wins, losses, and playtime for ranked games
+✅ **Match Statistics** - Track wins, losses, and playtime for ranked games  
 ✅ **Post-Match Summaries** - Detailed breakdown after every game  
 ✅ **Leaderboard Enhancements** - Colorized rankings and extended displays  
 ✅ **Slash Commands** - Configure everything via chat (no GUI needed)  
