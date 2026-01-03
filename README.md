@@ -19,7 +19,7 @@ Patron's Ledger enhances your Tales of Tribute experience with rank tracking, de
 ### Key Features
 
 ✅ **Rank Tracking** - See your rank changes after every competitive match  
-✅ **Match Statistics** - Track wins, losses, and playtime across all match types  
+✅ **Match Statistics** - Track wins, losses, and playtime for ranked games
 ✅ **Post-Match Summaries** - Detailed breakdown after every game  
 ✅ **Leaderboard Enhancements** - Colorized rankings and extended displays  
 ✅ **Slash Commands** - Configure everything via chat (no GUI needed)  
@@ -35,11 +35,7 @@ Patron's Ledger enhances your Tales of Tribute experience with rank tracking, de
 - `/totlb status` - Show current settings
 
 ### Statistics
-- `/totlb stats` - Show overall statistics across all match types
-- `/totlb stats casual` - Show casual match statistics
-- `/totlb stats ranked` - Show ranked match statistics
-- `/totlb stats npc` - Show NPC match statistics
-- `/totlb stats friendly` - Show friendly match statistics
+- `/totlb stats` - Show overall statistics
 
 ### Display Settings
 - `/totlb chat on/off` - Toggle chat notifications
@@ -60,14 +56,6 @@ Patron's Ledger enhances your Tales of Tribute experience with rank tracking, de
   Opponent: @PlayerName
 
 [ToT Ranked] Rank: 1247/5832 (+23). Score: 1856 (+18). Top 21.4%
-```
-
-### Statistics Overview
-```
-[Patron's Ledger] Overall Statistics:
-  Ranked: 47 played, 28 won (59.6%)
-  Casual: 12 played, 8 won (66.7%)
-  NPC: 5 played, 5 won (100.0%)
 ```
 
 ### Leaderboard UI Enhancements
@@ -101,7 +89,7 @@ This addon is based on code from:
 
 ## Technical Details
 
-- **API Version**: 101044, 101045
+- **API Version**: 101048
 - **Dependencies**: None
 - **SavedVariables**: PatronsLedgerSV (account-wide)
 - **Lua Version**: 5.1 (ESO standard)
