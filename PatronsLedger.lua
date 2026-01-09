@@ -154,6 +154,7 @@ local function InitializeMatchData()
 		matchDuration = 0,
 		turns = InitPlayerOpponentTable(),
 		patrons = {}, -- Will be populated after patron drafting
+		firstPlayer = nil, -- Will be set when first turn starts
 	}
 end
 
@@ -206,6 +207,11 @@ local function CreateCharStatistics(charId)
 		opponents = {},
 		-- New: Track patron combination win/loss records
 		patrons = {},
+		-- New: Track first hand statistics
+		firstHand = {
+			asSelf = {played = 0, won = 0},
+			asOpponent = {played = 0, won = 0},
+		},
 	}
 end
 
@@ -306,6 +312,29 @@ local function PostMatchProcess()
 			store.patrons[patronKey].won = store.patrons[patronKey].won + 1
 		end
 	end
+
+	-- Track first hand statistics
+	if matchData.firstPlayer then
+		-- Initialize firstHand structure if it doesn't exist (for existing saves)
+		if not store.firstHand then
+			store.firstHand = {
+				asSelf = {played = 0, won = 0},
+				asOpponent = {played = 0, won = 0},
+			}
+		end
+
+		if matchData.firstPlayer == TRIBUTE_PLAYER_PERSPECTIVE_SELF then
+			store.firstHand.asSelf.played = store.firstHand.asSelf.played + 1
+			if victory then
+				store.firstHand.asSelf.won = store.firstHand.asSelf.won + 1
+			end
+		else
+			store.firstHand.asOpponent.played = store.firstHand.asOpponent.played + 1
+			if victory then
+				store.firstHand.asOpponent.won = store.firstHand.asOpponent.won + 1
+			end
+		end
+	end
 end
 
 local function PrintMatchSummary()
@@ -339,6 +368,12 @@ local function PrintMatchSummary()
 			table.insert(patronNames, patron.name)
 		end
 		PrintMessage(string.format("  Patrons: %s", table.concat(patronNames, ", ")))
+	end
+
+	-- Display who had first turn in this match
+	if matchData.firstPlayer then
+		local firstPlayerText = matchData.firstPlayer == TRIBUTE_PLAYER_PERSPECTIVE_SELF and "You" or "Opponent"
+		PrintMessage(string.format("  First Turn: %s", firstPlayerText))
 	end
 end
 
@@ -521,6 +556,12 @@ local function OnPlayerTurnStart(_, isPlayer)
 	if not matchData.turns then return end
 
 	local perspective = isPlayer and TRIBUTE_PLAYER_PERSPECTIVE_SELF or TRIBUTE_PLAYER_PERSPECTIVE_OPPONENT
+
+	-- Track who got the first turn (only set once)
+	if matchData.firstPlayer == nil then
+		matchData.firstPlayer = perspective
+	end
+
 	if matchData.turns[perspective] then
 		matchData.turns[perspective] = matchData.turns[perspective] + 1
 	end
@@ -682,6 +723,27 @@ local function PrintStatistics()
 	PrintMessage("|c00ff00[ToT Ranked Stats]|r")
 	PrintMessage(string.format("  Played: %d | Won: %d | Win Rate: %.1f%%", s.played, s.won, winRate))
 	PrintMessage(string.format("  Total Time: %s | Avg Time: %s", FormatTime(s.time), FormatTime(avgTime)))
+
+	-- Display first hand statistics
+	local charData = savedVars.statistics.character[charId]
+	if charData.firstHand then
+		local fh = charData.firstHand
+		local totalSelf = fh.asSelf.played or 0
+		local totalOpponent = fh.asOpponent.played or 0
+		local total = totalSelf + totalOpponent
+
+		if total > 0 then
+			local selfWinRate = totalSelf > 0 and (fh.asSelf.won / totalSelf * 100) or 0
+			local opponentWinRate = totalOpponent > 0 and (fh.asOpponent.won / totalOpponent * 100) or 0
+			local selfPercent = (totalSelf / total * 100)
+
+			PrintMessage("|cFFFF00  First Turn Stats:|r")
+			PrintMessage(string.format("    You went first: %d times (%.1f%%) | Win Rate: %.1f%%",
+				totalSelf, selfPercent, selfWinRate))
+			PrintMessage(string.format("    Opponent went first: %d times (%.1f%%) | Win Rate: %.1f%%",
+				totalOpponent, 100 - selfPercent, opponentWinRate))
+		end
+	end
 end
 
 local function PrintDetailedStatistics()
